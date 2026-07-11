@@ -305,8 +305,9 @@ class Soup {
   }
 
   // Predator-diet organisms (§15) consume a smaller, nearby organism for bonus energy —
-  // any diet is fair game, purely size-based (see §15's food-web simplification note).
-  // At most one meal per predator per tick; eatenIds prevents double-claiming prey.
+  // any diet is fair game, purely size-based (see §15's food-web simplification note),
+  // except an organism's own kind — no cannibalism (§30). At most one meal per predator
+  // per tick; eatenIds prevents double-claiming prey.
   predate() {
     const eatenIds = new Set();
 
@@ -325,6 +326,10 @@ class Soup {
       for (const prey of candidates) {
         if (prey === predator || !prey.isAlive || eatenIds.has(prey.id)) continue;
         if (prey.displayRadius >= predator.displayRadius) continue;
+        // §30: "you can't eat something you could have mated with" — reuses the same
+        // compatibility check §11/§17/§19 use for mate-finding, rather than a second,
+        // parallel notion of "same species."
+        if (Genome.areCompatible(predator.expressedGenome.hex, prey.expressedGenome.hex)) continue;
 
         const dx = predator.x - prey.x;
         const dy = predator.y - prey.y;

@@ -21,6 +21,17 @@ html, body {
   background: #fdf6ea;
 }
 
+/* Toggle Side Panel (§37) — the fixed 390px column only goes away when this class is
+   also applied; hiding .side-panel alone would leave its column empty rather than
+   letting .play-area expand into it. */
+.app.side-panel-hidden {
+  grid-template-columns: 1fr;
+}
+
+.app.side-panel-hidden .side-panel {
+  display: none;
+}
+
 /* Top menu */
 
 .top-menu {

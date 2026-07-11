@@ -1,11 +1,14 @@
 /**
  * Soup — holds the live population of LifeForms and the space they occupy.
- * See docs/Game-Plan.md §9/§10/§11/§15/§17/§18/§19/§26/§27/§28/§29.
+ * See docs/Game-Plan.md §9/§10/§11/§15/§17/§18/§19/§26/§27/§28/§29/§35.
  */
 class Soup {
   // Soft carrying capacity: reproduction throttles and death rate rises as population
-  // approaches this (see the crowding math in tick()). Starting guess, not tuned — §11.
-  static CARRYING_CAPACITY = 300;
+  // approaches this (see the crowding math in tick()). Originally 300 (§11); raised to
+  // 520 (§35) since every death/energy pressure added since (§14/§15/§26/§27/§32)
+  // pulled the REALIZED equilibrium well below the nominal target — 520 was found
+  // empirically to be the value whose actual equilibrium lands back around ~300.
+  static CARRYING_CAPACITY = 520;
 
   // Per-tick chance of overcrowding death for an organism, at crowding == 1 (at capacity).
   // Scaled by crowding^2, so this is the death rate right at the carrying capacity, not below it.
@@ -13,7 +16,9 @@ class Soup {
 
   // Hard backstop, not the intended regulation mechanism — reproduction is unconditionally
   // skipped past this regardless of the soft crowding rolls, so mistuned constants can't
-  // reproduce their way back into the multi-gigabyte runaway already observed once. See §11.
+  // reproduce their way back into the multi-gigabyte runaway already observed once (§11).
+  // Left unchanged by §35's CARRYING_CAPACITY re-tune — still a comfortable safety margin
+  // above the ~300 realized equilibrium, not tied to a fixed ratio against it.
   static MAX_POPULATION = 600;
 
   // Foraging/predation (§15). photosynthetic (passive-only) and parasite (deferred) are

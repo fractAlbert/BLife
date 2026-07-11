@@ -25,6 +25,11 @@ const btnNewSoup = document.getElementById('btn-new-soup');
 const btnResetSoup = document.getElementById('btn-reset-soup');
 const spawnToolGrid = document.getElementById('spawn-tool-grid');
 const spawnToolHint = document.getElementById('spawn-tool-hint');
+const btnSpeed = document.getElementById('btn-speed');
+const btnToggleGrid = document.getElementById('btn-toggle-grid');
+const btnToggleStatsOverlay = document.getElementById('btn-toggle-stats-overlay');
+const btnToggleSidePanel = document.getElementById('btn-toggle-side-panel');
+const appLayout = document.querySelector('.app');
 
 // Same size the very first page-load population uses (below) — "New Soup" recreates
 // a soup like that one, just with a fresh random seed (§31).
@@ -52,7 +57,65 @@ function refreshStatusBar() {
   statusDiversity.textContent = `Diversity: ${soup.calculateGeneticDiversity().toFixed(0)}%`;
 }
 
-renderSoupCanvas(soupCtx, soup, performance.now());
+// §37: both off by default, unchanged from how the soup has always looked.
+let showGrid = false;
+let showStatsOverlay = false;
+
+function drawGridOverlay() {
+  const spacing = 50; // purely visual choice, not tied to SpatialGrid.CELL_SIZE
+  soupCtx.save();
+  soupCtx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+  soupCtx.lineWidth = 1;
+  for (let x = spacing; x < soupRoot.width; x += spacing) {
+    soupCtx.beginPath();
+    soupCtx.moveTo(x, 0);
+    soupCtx.lineTo(x, soupRoot.height);
+    soupCtx.stroke();
+  }
+  for (let y = spacing; y < soupRoot.height; y += spacing) {
+    soupCtx.beginPath();
+    soupCtx.moveTo(0, y);
+    soupCtx.lineTo(soupRoot.width, y);
+    soupCtx.stroke();
+  }
+  soupCtx.restore();
+}
+
+// Mirrors the bottom status bar's current text — doesn't replace it, just an
+// additional on-canvas copy for glancing at stats without looking away (§37).
+function drawStatsOverlay() {
+  const lines = [
+    statusTick.textContent,
+    statusPopulation.textContent,
+    statusFood.textContent,
+    statusDiversity.textContent,
+    statusFps.textContent,
+  ];
+  const padding = 8;
+  const lineHeight = 16;
+  const boxWidth = 150;
+  const boxHeight = padding * 2 + lineHeight * lines.length;
+
+  soupCtx.save();
+  soupCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+  soupCtx.fillRect(8, 8, boxWidth, boxHeight);
+  soupCtx.fillStyle = '#fff';
+  soupCtx.font = '12px sans-serif';
+  lines.forEach((line, i) => {
+    soupCtx.fillText(line, 8 + padding, 8 + padding + lineHeight * (i + 1) - 4);
+  });
+  soupCtx.restore();
+}
+
+// Single render entry point (§37) — every call site draws the soup itself, then
+// layers on whichever optional overlays are currently toggled on.
+function renderFrame(time) {
+  renderSoupCanvas(soupCtx, soup, time);
+  if (showGrid) drawGridOverlay();
+  if (showStatsOverlay) drawStatsOverlay();
+}
+
+renderFrame(performance.now());
 refreshStatusBar();
 
 let isRunning = true;
@@ -286,7 +349,7 @@ function afterSoupReinitialize() {
   exitDetailView();
   showInspector(null);
   refreshStatusBar();
-  renderSoupCanvas(soupCtx, soup, performance.now());
+  renderFrame(performance.now());
 }
 
 btnNewSoup.addEventListener('click', () => {
@@ -346,7 +409,7 @@ function spawnAt(x, y) {
   const hexB = Genome.randomWithForcedEnum('dietType', armedDietType);
   soup.entities.push(new LifeForm(hexA, hexB, x, y));
   statusPopulation.textContent = `Population: ${soup.aliveCount}`;
-  renderSoupCanvas(soupCtx, soup, performance.now());
+  renderFrame(performance.now());
 }
 
 attachCanvasSpawnHandler(soupRoot, () => armedDietType, spawnAt);
@@ -367,11 +430,11 @@ document.addEventListener('click', (event) => {
 
 function stepOnce(time = performance.now()) {
   soup.tick();
-  renderSoupCanvas(soupCtx, soup, time);
   statusTick.textContent = `Tick: ${soup.tickCount}`;
   statusPopulation.textContent = `Population: ${soup.aliveCount}`;
   statusFood.textContent = `Food: ${soup.nutrients.length}`;
   refreshInspectorStats();
+  renderFrame(time);
 }
 
 btnPlayPause.addEventListener('click', () => {
@@ -383,7 +446,73 @@ btnPlayPause.addEventListener('click', () => {
     setRunning(!isRunning);
   }
 });
-btnStep.addEventListener('click', stepOnce);
+btnStep.addEventListener('click', stepOnce); // §36: always exactly one tick, speed setting doesn't apply
+
+// §36: one fractional-tick accumulator drives both faster (>1x, multiple ticks/frame)
+// and slower (<1x, a tick only every few frames) playback, rather than two separate
+// code paths. At 1x this reduces to exactly one tick per frame, unchanged from before.
+const SPEED_LEVELS = [0.5, 1, 2, 4];
+let speedLevelIndex = 1; // starts at 1x
+let tickAccumulator = 0;
+
+function currentSpeedMultiplier() {
+  return SPEED_LEVELS[speedLevelIndex];
+}
+
+btnSpeed.addEventListener('click', () => {
+  speedLevelIndex = (speedLevelIndex + 1) % SPEED_LEVELS.length;
+  btnSpeed.textContent = `${currentSpeedMultiplier()}x`;
+});
+
+function advanceSimulation(time) {
+  tickAccumulator += currentSpeedMultiplier();
+  let tickedThisFrame = false;
+  while (tickAccumulator >= 1) {
+    soup.tick();
+    tickAccumulator -= 1;
+    tickedThisFrame = true;
+  }
+
+  // Skip the status/inspector refresh on a frame where nothing actually changed —
+  // rendering still happens below regardless, so wiggle/throb animation (driven by
+  // wall-clock time, not tick count) stays smooth even on a frame with no tick.
+  if (tickedThisFrame) {
+    statusTick.textContent = `Tick: ${soup.tickCount}`;
+    statusPopulation.textContent = `Population: ${soup.aliveCount}`;
+    statusFood.textContent = `Food: ${soup.nutrients.length}`;
+    refreshInspectorStats();
+  }
+
+  renderFrame(time);
+}
+
+// §37: side panel visibility affects the play area's rendered size, and the canvas's
+// pixel buffer (§1) is otherwise only ever measured once at page load — re-measuring
+// here avoids the soup visually stretching into its newly freed/reclaimed space.
+function resizeCanvasToPlayArea() {
+  const newWidth = soupRoot.clientWidth;
+  const newHeight = soupRoot.clientHeight;
+  soupRoot.width = newWidth;
+  soupRoot.height = newHeight;
+  soup.bounds = { width: newWidth, height: newHeight };
+  renderFrame(performance.now());
+}
+
+btnToggleGrid.addEventListener('click', () => {
+  showGrid = !showGrid;
+  btnToggleGrid.textContent = `Toggle Grid (${showGrid ? 'On' : 'Off'})`;
+});
+
+btnToggleStatsOverlay.addEventListener('click', () => {
+  showStatsOverlay = !showStatsOverlay;
+  btnToggleStatsOverlay.textContent = `Toggle Stats Overlay (${showStatsOverlay ? 'On' : 'Off'})`;
+});
+
+btnToggleSidePanel.addEventListener('click', () => {
+  const nowHidden = appLayout.classList.toggle('side-panel-hidden');
+  btnToggleSidePanel.textContent = `Toggle Side Panel (${nowHidden ? 'Off' : 'On'})`;
+  resizeCanvasToPlayArea();
+});
 
 // requestAnimationFrame loop always runs; isRunning just gates whether it does anything
 // this frame, so Play/Pause doesn't need to start/stop the rAF chain itself.
@@ -404,7 +533,7 @@ function loop(now) {
   }
 
   if (isRunning) {
-    stepOnce(now);
+    advanceSimulation(now);
   }
 
   requestAnimationFrame(loop);

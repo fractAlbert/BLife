@@ -1,6 +1,6 @@
 /**
  * Soup — holds the live population of LifeForms and the space they occupy.
- * See docs/Game-Plan.md §9/§10/§11/§15/§17/§18/§19/§26/§27/§28.
+ * See docs/Game-Plan.md §9/§10/§11/§15/§17/§18/§19/§26/§27/§28/§29.
  */
 class Soup {
   // Soft carrying capacity: reproduction throttles and death rate rises as population
@@ -50,9 +50,23 @@ class Soup {
     this.nutrients = [];
     this.birthEffects = []; // { x, y, tick } — ephemeral, purely visual (§18)
     this.tickCount = 0;
+    // Entity-to-entity proximity queries only (§29) — nutrients stay a linear scan,
+    // see docs. Rebuilt fresh once per tick in rebuildEntityGrid(), not maintained
+    // incrementally as entities move.
+    this.entityGrid = new SpatialGrid();
 
     for (let i = 0; i < Soup.NUTRIENT_COUNT; i++) {
       this.nutrients.push(this.randomNutrientPosition());
+    }
+  }
+
+  // §29: called once per tick, right after movement, before any proximity query reads
+  // it. Indexes every entity — living organisms and fading corpses alike — since
+  // predation/scavenging both need to find corpses/prey among "other entities."
+  rebuildEntityGrid() {
+    this.entityGrid.clear();
+    for (const entity of this.entities) {
+      this.entityGrid.insert(entity, entity.x, entity.y);
     }
   }
 
@@ -100,9 +114,20 @@ class Soup {
   }
 
   tick() {
+    // §29: movement steering (seekMate/flee/schooling/ambush, §17) queries the grid
+    // via findNearestEntity()/findEntitiesWithin() from inside entity.update() below,
+    // so it needs to already reflect positions as of the start of this tick before the
+    // movement loop runs.
+    this.rebuildEntityGrid();
+
     for (const entity of this.entities) {
       if (entity.isAlive) entity.update(this.bounds, this); // corpses don't move (§18)
     }
+
+    // Rebuilt again now that movement has actually changed positions — predate/
+    // scavenge/parasitize/matePairs below all need current, not pre-movement, contact
+    // distances.
+    this.rebuildEntityGrid();
 
     this.forage();
     this.predate();
@@ -205,6 +230,9 @@ class Soup {
       && (entity.traits.reproductionType === 'sexual' || entity.traits.reproductionType === 'either')
       && entity.canAffordReproduction()
     ));
+    // §29: O(1) membership test below, so grid candidates outside `seekers` are
+    // rejected without re-invoking canAffordReproduction() per pairwise comparison.
+    const seekerSet = new Set(seekers);
 
     const matedIds = new Set();
     const pairs = [];
@@ -214,8 +242,9 @@ class Soup {
 
       let bestMate = null;
       let bestDistance = a.traits.senseRadius;
-      for (const b of seekers) {
-        if (b === a || matedIds.has(b.id)) continue;
+      const candidates = this.entityGrid.queryRadius(a.x, a.y, a.traits.senseRadius);
+      for (const b of candidates) {
+        if (b === a || matedIds.has(b.id) || !seekerSet.has(b)) continue;
         if (!Genome.areCompatible(a.expressedGenome.hex, b.expressedGenome.hex)) continue;
 
         const dx = a.x - b.x;
@@ -285,7 +314,15 @@ class Soup {
       if (!predator.isAlive || eatenIds.has(predator.id)) continue;
       if (!Soup.PREDATOR_DIETS.has(predator.traits.dietType)) continue;
 
-      for (const prey of this.entities) {
+      // §29: prey's own displayRadius isn't known until we've found it, so query with
+      // the largest possible contact distance (predator's radius + the biggest any
+      // organism can ever be) — same candidate set the old this.entities scan would
+      // have produced, just pre-filtered by cell instead of checked one by one.
+      const candidates = this.entityGrid.queryRadius(
+        predator.x, predator.y, predator.displayRadius + LifeForm.MAX_DISPLAY_RADIUS,
+      );
+
+      for (const prey of candidates) {
         if (prey === predator || !prey.isAlive || eatenIds.has(prey.id)) continue;
         if (prey.displayRadius >= predator.displayRadius) continue;
 
@@ -310,7 +347,11 @@ class Soup {
       if (!scavenger.isAlive) continue;
       if (!Soup.SCAVENGE_DIETS.has(scavenger.traits.dietType)) continue;
 
-      for (const corpse of this.entities) {
+      const candidates = this.entityGrid.queryRadius(
+        scavenger.x, scavenger.y, scavenger.displayRadius + LifeForm.MAX_DISPLAY_RADIUS,
+      );
+
+      for (const corpse of candidates) {
         if (corpse === scavenger || corpse.deathTick === null) continue;
 
         const dx = scavenger.x - corpse.x;
@@ -333,7 +374,11 @@ class Soup {
       if (!parasite.isAlive) continue;
       if (parasite.traits.dietType !== 'parasite') continue;
 
-      for (const host of this.entities) {
+      const candidates = this.entityGrid.queryRadius(
+        parasite.x, parasite.y, parasite.displayRadius + LifeForm.MAX_DISPLAY_RADIUS,
+      );
+
+      for (const host of candidates) {
         if (host === parasite || !host.isAlive) continue;
         if (host.traits.dietType === 'parasite') continue; // no hyperparasitism in v1
         if (host.displayRadius < parasite.displayRadius) continue;
@@ -375,11 +420,16 @@ class Soup {
 
   // Movement-pattern query helpers (§17). Additive — forage()/predate() keep their own
   // already-verified inline search loops rather than being refactored onto these.
+  // §29: queries the grid instead of scanning every entity — maxDistance is exactly
+  // the radius callers already wanted checked, so no extra padding is needed here
+  // (unlike predate()/scavenge()/parasitize(), which don't know the other side's
+  // radius up front).
   findNearestEntity(x, y, maxDistance, predicate) {
     let nearest = null;
     let nearestDistance = maxDistance;
 
-    for (const entity of this.entities) {
+    const candidates = this.entityGrid.queryRadius(x, y, maxDistance);
+    for (const entity of candidates) {
       if (!predicate(entity)) continue;
       const dx = entity.x - x;
       const dy = entity.y - y;
@@ -412,7 +462,8 @@ class Soup {
 
   findEntitiesWithin(x, y, maxDistance, predicate) {
     const results = [];
-    for (const entity of this.entities) {
+    const candidates = this.entityGrid.queryRadius(x, y, maxDistance);
+    for (const entity of candidates) {
       if (!predicate(entity)) continue;
       const dx = entity.x - x;
       const dy = entity.y - y;

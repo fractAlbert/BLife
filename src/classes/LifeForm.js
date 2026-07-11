@@ -14,6 +14,12 @@ class LifeForm {
   // renderer-level scale factor between the two — tune here, not in the gene map.
   static VISUAL_SCALE = 0.25;
 
+  // Largest displayRadius any organism can ever reach (full adult size, size trait's
+  // max value) — used to bound spatial-grid query radii for proximity checks against
+  // an as-yet-unknown other organism's size (§29), derived rather than hardcoded so it
+  // stays correct if the size gene's range ever changes.
+  static MAX_DISPLAY_RADIUS = Genome.GENE_MAP.find((f) => f.name === 'size').max * LifeForm.VISUAL_SCALE;
+
   // Radians of random heading drift applied per tick for drift/fallback wander —
   // higher wanders more erratically.
   static WANDER = 0.15;

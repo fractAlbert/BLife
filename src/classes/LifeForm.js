@@ -48,6 +48,11 @@ class LifeForm {
   // Per-tick energy cost, multiplied by `size` — bigger organisms cost more (§14).
   static BASE_METABOLISM_RATE = 0.0002;
 
+  // Per-tick energy cost, multiplied by this tick's ACTUAL velocity magnitude, not the
+  // raw `speed` trait — idle/ambush organisms move slower than their trait permits and
+  // should only pay for what they actually did (§32).
+  static SPEED_METABOLISM_RATE = 0.0005;
+
   // Passive per-tick energy gain for photosynthetic organisms (§14) — roughly
   // matches average metabolic cost, so they're close to self-sustaining.
   static PHOTOSYNTHETIC_REGEN_RATE = 0.005;
@@ -142,12 +147,17 @@ class LifeForm {
   // nearby food/threats/organisms; bounds for the wall-bounce, same as always.
   update(bounds, soup) {
     const pattern = this.traits.movementPattern;
+    // §32: how fast this organism actually moved THIS tick, not its raw `speed` trait —
+    // idle never moves regardless of the trait, ambush only moves a scaled-down
+    // fraction of it. Stays 0 for idle since it never touches vx/vy for movement.
+    let actualSpeed = 0;
 
     if (pattern === 'idle') {
       // Sessile — no movement at all, position never changes.
     } else if (pattern === 'ambush') {
       this.applyWander(LifeForm.WANDER, this.traits.speed * LifeForm.AMBUSH_SPEED_SCALE);
       this.moveAndBounce(bounds);
+      actualSpeed = Math.hypot(this.vx, this.vy);
     } else {
       const target = this.findSteerTarget(pattern, soup);
       if (target) {
@@ -157,6 +167,7 @@ class LifeForm {
         this.applyWander(wander, this.traits.speed);
       }
       this.moveAndBounce(bounds);
+      actualSpeed = Math.hypot(this.vx, this.vy);
     }
 
     this.age += 1;
@@ -168,8 +179,10 @@ class LifeForm {
     );
 
     // Metabolism scales with CURRENT size, not adult size — juveniles cost less to
-    // maintain than adults of the same genome (§22).
-    const metabolism = LifeForm.BASE_METABOLISM_RATE * this.radius;
+    // maintain than adults of the same genome (§22) — plus a speed-based term (§32):
+    // actual movement this tick costs energy on top of just existing.
+    const metabolism = LifeForm.BASE_METABOLISM_RATE * this.radius
+      + LifeForm.SPEED_METABOLISM_RATE * actualSpeed;
     const regen = this.traits.dietType === 'photosynthetic'
       ? LifeForm.PHOTOSYNTHETIC_REGEN_RATE
       : LifeForm.OTHER_DIET_REGEN_RATE;

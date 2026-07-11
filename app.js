@@ -23,6 +23,8 @@ const btnPlayPause = document.getElementById('btn-play-pause');
 const btnStep = document.getElementById('btn-step');
 const btnNewSoup = document.getElementById('btn-new-soup');
 const btnResetSoup = document.getElementById('btn-reset-soup');
+const spawnToolGrid = document.getElementById('spawn-tool-grid');
+const spawnToolHint = document.getElementById('spawn-tool-hint');
 
 // Same size the very first page-load population uses (below) — "New Soup" recreates
 // a soup like that one, just with a fresh random seed (§31).
@@ -56,6 +58,9 @@ refreshStatusBar();
 let isRunning = true;
 let selectedEntity = null;
 let selectedStatsEl = null;
+
+// §33: null when no spawn tool is armed, else one of Genome's dietType enum values.
+let armedDietType = null;
 
 function setRunning(running) {
   isRunning = running;
@@ -108,6 +113,7 @@ function showInspector(entity) {
 // Inspector's compact summary still updates too, so there's a quick-glance record of
 // what's selected even after returning to the soup.
 function onSoupClick(entity) {
+  if (armedDietType) return; // §33: a placement click, not a selection click
   showInspector(entity);
   if (entity) showOrganismView(entity);
 }
@@ -293,6 +299,57 @@ btnResetSoup.addEventListener('click', () => {
   soup.reinitialize(currentSeed);
   afterSoupReinitialize();
 });
+
+// §33: camelCase enum value -> "Title Case" label, e.g. "filterFeeder" -> "Filter Feeder".
+function formatDietLabel(dietType) {
+  return dietType.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
+}
+
+// One button per dietType value, generated from the gene map rather than hardcoded, so
+// this panel stays in sync if the gene map's diet list ever changes (§33).
+const dietTypeField = Genome.GENE_MAP.find((f) => f.name === 'dietType');
+const spawnToolButtons = new Map(); // dietType -> button, for updating the active highlight
+
+for (const dietType of dietTypeField.values) {
+  const button = document.createElement('button');
+  button.className = 'spawn-tool-button';
+  button.textContent = formatDietLabel(dietType);
+  button.addEventListener('click', () => {
+    armedDietType = armedDietType === dietType ? null : dietType;
+    updateSpawnToolUI();
+  });
+  spawnToolGrid.appendChild(button);
+  spawnToolButtons.set(dietType, button);
+}
+
+function updateSpawnToolUI() {
+  for (const [dietType, button] of spawnToolButtons) {
+    button.classList.toggle('active', dietType === armedDietType);
+  }
+  spawnToolHint.textContent = armedDietType
+    ? `Spawn tool: ${formatDietLabel(armedDietType)} — click or drag in the soup to place, click the button again (or Esc) to stop.`
+    : 'No spawn tool selected — click a diet above, then click or drag in the soup to place organisms.';
+}
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && armedDietType) {
+    armedDietType = null;
+    updateSpawnToolUI();
+  }
+});
+
+function spawnAt(x, y) {
+  // §33: both diploid strands get the SAME forced dietType — the expressed trait is
+  // the bitwise OR of the two (§28), so forcing only one strand could let stray bits
+  // from the other strand's fully-random dietType field change the decoded result.
+  const hexA = Genome.randomWithForcedEnum('dietType', armedDietType);
+  const hexB = Genome.randomWithForcedEnum('dietType', armedDietType);
+  soup.entities.push(new LifeForm(hexA, hexB, x, y));
+  statusPopulation.textContent = `Population: ${soup.aliveCount}`;
+  renderSoupCanvas(soupCtx, soup, performance.now());
+}
+
+attachCanvasSpawnHandler(soupRoot, () => armedDietType, spawnAt);
 
 attachCanvasClickHandler(soup, soupRoot, onSoupClick);
 

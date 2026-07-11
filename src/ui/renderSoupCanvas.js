@@ -102,7 +102,7 @@ function drawOrganismToCanvas(ctx, entity, time) {
     const restAngle = (i / appendageCount) * Math.PI * 2;
     const phase = entity.id * 0.7 + i * 0.9;
     const pose = getAppendagePose(profile, restAngle, phase, speedFactor, t);
-    const length = radius * 0.9 * pose.lengthScale;
+    const length = radius * entity.traits.appendageLengthScale * pose.lengthScale;
     const tipX = cx + Math.cos(pose.angle) * (radius + length);
     const tipY = cy + Math.sin(pose.angle) * (radius + length);
 
@@ -148,6 +148,19 @@ function renderSoupCanvas(ctx, soup, time) {
   drawBirthEffectsToCanvas(ctx, soup);
 }
 
+// Screen coordinates -> the canvas's local pixel space, via getBoundingClientRect.
+// Shared by attachCanvasClickHandler and attachCanvasSpawnHandler (§33) rather than
+// duplicating the scale/offset math a second time.
+function canvasEventToLocal(canvas, event) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  return {
+    x: (event.clientX - rect.left) * scaleX,
+    y: (event.clientY - rect.top) * scaleY,
+  };
+}
+
 /**
  * attachCanvasClickHandler — one click listener on the canvas, converting screen
  * coordinates to the canvas's local pixel space via getBoundingClientRect, then
@@ -156,12 +169,50 @@ function renderSoupCanvas(ctx, soup, time) {
  */
 function attachCanvasClickHandler(soup, canvas, onSelect) {
   canvas.addEventListener('click', (event) => {
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const x = (event.clientX - rect.left) * scaleX;
-    const y = (event.clientY - rect.top) * scaleY;
-
+    const { x, y } = canvasEventToLocal(canvas, event);
     onSelect(soup.findEntityAt(x, y));
+  });
+}
+
+/**
+ * attachCanvasSpawnHandler — click-to-place and drag-to-paint for spawn tools (§33).
+ * `getArmedDietType()` is queried on every event (not captured once) so the armed tool
+ * can change between events; `onSpawnAt(x, y)` does the actual placement. Placements
+ * during a drag are throttled to at least `minPaintDistance` apart so a single drag
+ * gesture paints a trail rather than one organism per pixel of mouse movement.
+ */
+function attachCanvasSpawnHandler(canvas, getArmedDietType, onSpawnAt, minPaintDistance = 20) {
+  let painting = false;
+  let lastX = null;
+  let lastY = null;
+
+  function maybePlace(x, y) {
+    if (lastX !== null) {
+      const dx = x - lastX;
+      const dy = y - lastY;
+      if (Math.sqrt(dx * dx + dy * dy) < minPaintDistance) return;
+    }
+    onSpawnAt(x, y);
+    lastX = x;
+    lastY = y;
+  }
+
+  canvas.addEventListener('mousedown', (event) => {
+    if (!getArmedDietType()) return;
+    painting = true;
+    lastX = null;
+    lastY = null;
+    const { x, y } = canvasEventToLocal(canvas, event);
+    maybePlace(x, y);
+  });
+
+  canvas.addEventListener('mousemove', (event) => {
+    if (!painting || !getArmedDietType()) return;
+    const { x, y } = canvasEventToLocal(canvas, event);
+    maybePlace(x, y);
+  });
+
+  window.addEventListener('mouseup', () => {
+    painting = false;
   });
 }

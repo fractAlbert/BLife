@@ -56,11 +56,22 @@ class Genome {
     // even an organism that's able to reproduce may not pursue it if this is low.
     { name: 'proclivityToProcreate', bitStart: 56, bitLength: 4, kind: 'linear', min: 0, max: 1 },
 
-    // bits 60-69 reserved for future traits
+    // Ratio of appendage length to body radius (§34) — 3.6 is 4x the fixed 0.9 ratio
+    // every organism used before this trait existed. Genome.random() forces this
+    // field's starting raw value (see APPENDAGE_LENGTH_SCALE_STARTING_RAW below) so
+    // every freshly-spawned organism starts at ~today's old ratio; only mutation
+    // across generations moves a lineage away from it. Uses 6 of the 10 bits that
+    // were reserved for future traits; bits 66-69 remain reserved.
+    { name: 'appendageLengthScale', bitStart: 60, bitLength: 6, kind: 'linear', min: 0, max: 3.6 },
 
     // Mate-recognition marker, not a behavioral trait — see class doc comment above.
     { name: 'compatibilityTag', bitStart: 70, bitLength: 10, kind: 'raw' },
   ];
+
+  // §34: raw bit-pattern Genome.random() forces into every fresh genome's
+  // appendageLengthScale field — decodes to ~0.914 (closest this bit width lands to
+  // the old fixed 0.9 ratio), 25% of the way up the 0-3.6 range.
+  static APPENDAGE_LENGTH_SCALE_STARTING_RAW = 16;
 
   constructor(hex) {
     this.hex = hex ?? Genome.random();
@@ -106,12 +117,40 @@ class Genome {
     }
   }
 
+  // §34: every fresh genome forces the SAME appendageLengthScale starting value —
+  // reproduction never calls random() (offspring always derive from a parent's
+  // existing genome via mutate()/strand inheritance, §19/§28), so this only affects
+  // brand-new, unrelated organisms; a lineage's value only ever moves via mutation.
   static random() {
     let hex = '';
     for (let i = 0; i < Genome.HEX_LENGTH; i++) {
       hex += Math.floor(Math.random() * 16).toString(16);
     }
-    return hex;
+    return Genome.forceRawBits(hex, 'appendageLengthScale', Genome.APPENDAGE_LENGTH_SCALE_STARTING_RAW);
+  }
+
+  // Overwrites one field's raw bits in a genome hex string with an explicit integer,
+  // leaving every other bit — including every other trait — untouched. Shared
+  // low-level primitive: random() uses it to force appendageLengthScale's starting
+  // value (§34); randomWithForcedEnum() below uses it for spawn tools (§33).
+  static forceRawBits(hex, fieldName, rawValue) {
+    const field = Genome.GENE_MAP.find((f) => f.name === fieldName);
+    if (!field) throw new Error(`Unknown trait: ${fieldName}`);
+    const mask = ((1n << BigInt(field.bitLength)) - 1n) << BigInt(field.bitStart);
+    let value = BigInt('0x' + hex) & ~mask;
+    value |= (BigInt(rawValue) << BigInt(field.bitStart)) & mask;
+    return Genome.toHex(value);
+  }
+
+  // A random genome hex, but with one enum field forced to a specific decoded value
+  // (spawn tools, §33) — every other bit, including every other trait, is still
+  // independently random, same as any other freshly-spawned organism.
+  static randomWithForcedEnum(fieldName, desiredValue) {
+    const field = Genome.GENE_MAP.find((f) => f.name === fieldName);
+    if (!field || field.kind !== 'enum') throw new Error(`Not an enum field: ${fieldName}`);
+    const raw = field.values.indexOf(desiredValue);
+    if (raw === -1) throw new Error(`Unknown value "${desiredValue}" for ${fieldName}`);
+    return Genome.forceRawBits(Genome.random(), fieldName, raw);
   }
 
   // Uniform crossover: each bit independently sourced from parent A or B.

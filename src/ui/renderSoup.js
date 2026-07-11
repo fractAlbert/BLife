@@ -94,7 +94,7 @@ function renderOrganism(entity, cx, cy, radius, time = 0) {
     const restAngle = (i / appendageCount) * Math.PI * 2;
     const phase = entity.id * 0.7 + i * 0.9;
     const pose = getAppendagePose(profile, restAngle, phase, speedFactor, t);
-    const length = radius * 0.9 * pose.lengthScale;
+    const length = radius * entity.traits.appendageLengthScale * pose.lengthScale;
     const tipX = cx + Math.cos(pose.angle) * (radius + length);
     const tipY = cy + Math.sin(pose.angle) * (radius + length);
 

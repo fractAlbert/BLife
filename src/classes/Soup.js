@@ -1,6 +1,6 @@
 /**
  * Soup — holds the live population of LifeForms and the space they occupy.
- * See docs/Game-Plan.md §9/§10/§11/§15/§17/§18/§19.
+ * See docs/Game-Plan.md §9/§10/§11/§15/§17/§18/§19/§26/§27/§28.
  */
 class Soup {
   // Soft carrying capacity: reproduction throttles and death rate rises as population
@@ -35,6 +35,14 @@ class Soup {
   // Ticks a birth-effect ring lives before expiring (§18).
   static BIRTH_EFFECT_TICKS = 20;
 
+  // Corpse-scavenging (§26) — a repeatable per-tick trickle, not a one-time meal.
+  static SCAVENGE_DIETS = new Set(['scavenger', 'detritivore']);
+  static SCAVENGE_ENERGY_RATE = 0.01;
+  static SCAVENGE_DECAY_BOOST = 2; // on top of the normal +1 aging a fading corpse already gets
+
+  // Parasitism (§27) — energy moved directly from host to parasite, not created.
+  static PARASITE_DRAIN_RATE = 0.01;
+
   constructor(bounds, margin = 30) {
     this.bounds = bounds; // { width, height }, local coordinate space matching the background art
     this.margin = margin; // keep spawns off the frame edge
@@ -65,7 +73,7 @@ class Soup {
     for (let bit = 0; bit < Genome.BIT_LENGTH; bit++) {
       let onesCount = 0;
       for (const entity of alive) {
-        if ((entity.genome.value >> BigInt(bit)) & 1n) onesCount++;
+        if ((entity.expressedGenome.value >> BigInt(bit)) & 1n) onesCount++;
       }
       const p = onesCount / alive.length;
       if (p > 0 && p < 1) {
@@ -87,7 +95,7 @@ class Soup {
     for (let i = 0; i < count; i++) {
       const x = this.margin + Math.random() * (this.bounds.width - this.margin * 2);
       const y = this.margin + Math.random() * (this.bounds.height - this.margin * 2);
-      this.entities.push(new LifeForm(Genome.random(), x, y));
+      this.entities.push(new LifeForm(Genome.random(), Genome.random(), x, y));
     }
   }
 
@@ -98,6 +106,8 @@ class Soup {
 
     this.forage();
     this.predate();
+    this.scavenge();
+    this.parasitize();
 
     const aliveCount = this.aliveCount;
     const crowding = aliveCount / Soup.CARRYING_CAPACITY;
@@ -110,7 +120,7 @@ class Soup {
     for (const pair of this.matePairs()) {
       if (aliveCount + offspring.length >= Soup.MAX_POPULATION) break;
       if (Math.random() < crowding) continue; // same crowding throttle as asexual, below
-      offspring.push(new LifeForm(pair.hex, pair.x, pair.y));
+      offspring.push(new LifeForm(pair.hexA, pair.hexB, pair.x, pair.y));
       this.birthEffects.push({ x: pair.x, y: pair.y, tick: 0 });
     }
 
@@ -118,8 +128,8 @@ class Soup {
       if (aliveCount + offspring.length >= Soup.MAX_POPULATION) break;
       if (!entity.isAlive) continue;
 
-      const childGenomeHex = entity.tryReproduce();
-      if (!childGenomeHex) continue; // cooldown/proclivity check failed, nothing consumed beyond that
+      const childGenomes = entity.tryReproduce();
+      if (!childGenomes) continue; // cooldown/proclivity check failed, nothing consumed beyond that
 
       // Attempt succeeded biologically but can still fail to crowding — the cooldown
       // above is already spent either way, so this is what makes reproduction feel
@@ -129,7 +139,7 @@ class Soup {
       const spread = LifeForm.OFFSPRING_SPREAD;
       const x = this.clamp(entity.x + (Math.random() - 0.5) * spread, this.bounds.width);
       const y = this.clamp(entity.y + (Math.random() - 0.5) * spread, this.bounds.height);
-      offspring.push(new LifeForm(childGenomeHex, x, y));
+      offspring.push(new LifeForm(childGenomes.hexA, childGenomes.hexB, x, y));
       this.birthEffects.push({ x, y, tick: 0 }); // spawn ring, §18
     }
     this.entities.push(...offspring);
@@ -183,9 +193,12 @@ class Soup {
   // Sexual/either pairing (§19). Eligibility (cooldown/energy/proclivity) is precomputed
   // once per organism via canAffordReproduction() and reused for every pairwise
   // comparison — re-invoking it per candidate would re-roll proclivity multiple times
-  // for the same organism in one tick. Returns [{ hex, x, y }, ...] for Soup.tick() to
-  // turn into actual LifeForms (kept as plain data here, not constructed directly, so
-  // this method has no rendering/entity-construction concerns of its own).
+  // for the same organism in one tick. Compatibility is judged on expressed traits
+  // (§28), but each parent contributes one of its own two strands — chosen at random,
+  // then mutated — rather than crossing over per-bit. Returns [{ hexA, hexB, x, y }, ...]
+  // for Soup.tick() to turn into actual LifeForms (kept as plain data here, not
+  // constructed directly, so this method has no rendering/entity-construction concerns
+  // of its own).
   matePairs() {
     const seekers = this.entities.filter((entity) => (
       entity.isAlive
@@ -203,7 +216,7 @@ class Soup {
       let bestDistance = a.traits.senseRadius;
       for (const b of seekers) {
         if (b === a || matedIds.has(b.id)) continue;
-        if (!Genome.areCompatible(a.genome.hex, b.genome.hex)) continue;
+        if (!Genome.areCompatible(a.expressedGenome.hex, b.expressedGenome.hex)) continue;
 
         const dx = a.x - b.x;
         const dy = a.y - b.y;
@@ -217,14 +230,18 @@ class Soup {
       if (!bestMate) continue;
       if (bestDistance > a.displayRadius + bestMate.displayRadius) continue; // sensed, but not touching yet
 
-      const hex = Genome.mutate(Genome.crossover(a.genome.hex, bestMate.genome.hex), LifeForm.MUTATION_RATE);
+      const aStrand = Math.random() < 0.5 ? a.genomeA : a.genomeB;
+      const bStrand = Math.random() < 0.5 ? bestMate.genomeA : bestMate.genomeB;
+      const hexA = Genome.mutate(aStrand.hex, LifeForm.MUTATION_RATE);
+      const hexB = Genome.mutate(bStrand.hex, LifeForm.MUTATION_RATE);
       a.recordReproduction();
       bestMate.recordReproduction();
       matedIds.add(a.id);
       matedIds.add(bestMate.id);
 
       pairs.push({
-        hex,
+        hexA,
+        hexB,
         x: (a.x + bestMate.x) / 2,
         y: (a.y + bestMate.y) / 2,
       });
@@ -280,6 +297,55 @@ class Soup {
           prey.die();
           eatenIds.add(prey.id);
           break; // one meal per predator per tick
+        }
+      }
+    }
+  }
+
+  // scavenger/detritivore diets (§26) feed directly on a touching fading corpse,
+  // accelerating its decomposition on top of the normal +1/tick aging. Not capped to
+  // one scavenger per corpse — multiple can feed on the same one simultaneously.
+  scavenge() {
+    for (const scavenger of this.entities) {
+      if (!scavenger.isAlive) continue;
+      if (!Soup.SCAVENGE_DIETS.has(scavenger.traits.dietType)) continue;
+
+      for (const corpse of this.entities) {
+        if (corpse === scavenger || corpse.deathTick === null) continue;
+
+        const dx = scavenger.x - corpse.x;
+        const dy = scavenger.y - corpse.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance <= scavenger.displayRadius + corpse.displayRadius) {
+          scavenger.feed(Soup.SCAVENGE_ENERGY_RATE);
+          corpse.deathTick += Soup.SCAVENGE_DECAY_BOOST;
+          break; // one corpse scavenged per organism per tick
+        }
+      }
+    }
+  }
+
+  // parasite diet (§27): drains energy from a touching, eligible living host every
+  // tick rather than a one-time kill (predation) or a static resource (foraging).
+  // No persistent "attached to X" state — re-checks for any eligible host each tick.
+  parasitize() {
+    for (const parasite of this.entities) {
+      if (!parasite.isAlive) continue;
+      if (parasite.traits.dietType !== 'parasite') continue;
+
+      for (const host of this.entities) {
+        if (host === parasite || !host.isAlive) continue;
+        if (host.traits.dietType === 'parasite') continue; // no hyperparasitism in v1
+        if (host.displayRadius < parasite.displayRadius) continue;
+
+        const dx = parasite.x - host.x;
+        const dy = parasite.y - host.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance <= parasite.displayRadius + host.displayRadius) {
+          const drained = Math.min(Soup.PARASITE_DRAIN_RATE, host.energy);
+          host.energy -= drained;
+          parasite.feed(drained);
+          break; // one host per parasite per tick
         }
       }
     }

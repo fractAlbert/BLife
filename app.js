@@ -1,11 +1,9 @@
-// Entry point for the game shell (index.html). See docs/Game-Plan.md §9-§16:
-// organisms exist, drift/bounce/reproduce/die/feed around the soup, and clicking one
-// opens Organism View directly; Population View groups everyone by diet type.
+// Entry point for the game shell (index.html). See docs/Game-Plan.md §9-§25:
+// organisms exist, drift/bounce/reproduce/die/feed around the soup (rendered on
+// canvas, §25), and clicking one opens Organism View directly; Population View
+// groups everyone by diet type.
 
 const soupRoot = document.getElementById('soup');
-const soupLayer = document.getElementById('soup-layer');
-const nutrientLayer = document.getElementById('nutrient-layer');
-const birthEffectLayer = document.getElementById('birth-effect-layer');
 const inspectorEmpty = document.getElementById('inspector-empty');
 const inspectorContent = document.getElementById('inspector-content');
 const organismView = document.getElementById('organism-view');
@@ -24,19 +22,19 @@ const statusSelected = document.getElementById('status-selected');
 const btnPlayPause = document.getElementById('btn-play-pause');
 const btnStep = document.getElementById('btn-step');
 
-// viewBox matches the SVG's actual measured pixel size, so 1 unit = 1 CSS pixel —
-// no scale/crop/stretch transform, and therefore no dead space or oval distortion
-// regardless of window shape. See docs/Game-Plan.md §1 "Soup visual style (v1, simplified)".
+// canvas.width/height match its actual measured CSS pixel size, so 1 unit = 1 CSS
+// pixel — same "no dead space or oval distortion" idea as the old SVG viewBox
+// approach (§1), just via canvas's own sizing attributes instead (§25).
 const soupWidth = soupRoot.clientWidth;
 const soupHeight = soupRoot.clientHeight;
-soupRoot.setAttribute('viewBox', `0 0 ${soupWidth} ${soupHeight}`);
+soupRoot.width = soupWidth;
+soupRoot.height = soupHeight;
+const soupCtx = soupRoot.getContext('2d');
 
 const soup = new Soup({ width: soupWidth, height: soupHeight });
 soup.spawnRandom(18);
 
-renderNutrients(soup, nutrientLayer);
-renderSoup(soup, soupLayer, performance.now());
-renderBirthEffects(soup, birthEffectLayer);
+renderSoupCanvas(soupCtx, soup, performance.now());
 statusPopulation.textContent = `Population: ${soup.aliveCount}`;
 statusFood.textContent = `Food: ${soup.nutrients.length}`;
 statusDiversity.textContent = `Diversity: ${soup.calculateGeneticDiversity().toFixed(0)}%`;
@@ -172,10 +170,10 @@ function showOrganismView(entity) {
   const geneMapHeading = document.createElement('h3');
   geneMapHeading.textContent = 'Gene Map';
   geneMapSection.appendChild(geneMapHeading);
-  geneMapSection.appendChild(renderGeneMapView(entity.genome.hex));
+  geneMapSection.appendChild(renderGeneMapView(entity.expressedGenome.hex));
   organismViewContent.appendChild(geneMapSection);
 
-  organismViewContent.appendChild(renderGenomeTable('Genome', entity.genome.hex));
+  organismViewContent.appendChild(renderGenomeTable('Genome', entity.expressedGenome.hex));
 
   organismView.hidden = false;
 }
@@ -261,7 +259,7 @@ function appendPopulationGroup(headingText, entities) {
 
 btnViewPopulation.addEventListener('click', showPopulationView);
 
-attachSoupClickHandler(soup, soupRoot, onSoupClick);
+attachCanvasClickHandler(soup, soupRoot, onSoupClick);
 
 // Only one top-menu dropdown open at a time, and clicking anywhere outside all of them
 // closes whichever is open. Runs on document click (bubble phase), before the browser's
@@ -277,9 +275,7 @@ document.addEventListener('click', (event) => {
 
 function stepOnce(time = performance.now()) {
   soup.tick();
-  renderNutrients(soup, nutrientLayer);
-  renderSoup(soup, soupLayer, time);
-  renderBirthEffects(soup, birthEffectLayer);
+  renderSoupCanvas(soupCtx, soup, time);
   statusTick.textContent = `Tick: ${soup.tickCount}`;
   statusPopulation.textContent = `Population: ${soup.aliveCount}`;
   statusFood.textContent = `Food: ${soup.nutrients.length}`;

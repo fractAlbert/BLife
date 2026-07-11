@@ -3,6 +3,7 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 // appendageStyle -> animation profile (§13). Rendering-level interpretation of an
 // existing genome trait, not new genome bits. Amplitudes in radians (sway/travel) or
 // as a fraction of appendage length (wave/stretch); 0 means that axis is inactive.
+// Shared by the reference view (SVG, below) and the soup's canvas renderer (§25).
 const APPENDAGE_ANIMATION_PROFILES = {
   style0: { sway: 0, travel: 0, wave: 0, stretch: 0 },
   style1: { sway: 0.35, travel: 0, wave: 0, stretch: 0 },
@@ -65,14 +66,14 @@ function getBodyThrobScale(growthRate, phase, t) {
 /**
  * renderOrganism — a hand-built shape (body silhouette + appendage shapes, §21) for
  * one LifeForm, colored from its decoded genome traits, drawn at an explicit center
- * point and radius rather than reading entity.x/y/displayRadius directly — so it can
- * be reused both for the soup (real position/displayRadius) and the Organism View's
- * enlarged reference render (fixed center, magnified radius).
+ * point and radius. Used only by the Organism View reference render (§25 moved the
+ * soup itself to canvas — this SVG path stays because it only ever draws one organism
+ * at a time, so the DOM-churn problem that motivated the move never applied here).
  *
  * `time` (ms, e.g. a rAF timestamp) drives the §13 appendage/body animation. Defaults
- * to 0 (a fixed, non-animated pose) for callers like the Organism View reference
- * render that deliberately want a static snapshot. A dying organism (§18) renders at
- * a frozen pose (a corpse shouldn't still be wiggling) and fading opacity.
+ * to 0 (a fixed, non-animated pose) for callers that deliberately want a static
+ * snapshot. A dying organism (§18) renders at a frozen pose (a corpse shouldn't still
+ * be wiggling) and fading opacity.
  */
 function renderOrganism(entity, cx, cy, radius, time = 0) {
   const color = `hsl(${entity.traits.hue.toFixed(0)}, ${Math.round(entity.traits.saturation * 100)}%, 55%)`;
@@ -115,61 +116,6 @@ function renderOrganism(entity, cx, cy, radius, time = 0) {
   return group;
 }
 
-/**
- * renderNutrients — draws every Soup.nutrients particle into groupElement (the
- * <g id="nutrient-layer">, see §15), placed beneath soup-layer so organisms draw on top.
- */
-function renderNutrients(soup, groupElement) {
-  groupElement.innerHTML = '';
-
-  for (const nutrient of soup.nutrients) {
-    const dot = document.createElementNS(SVG_NS, 'circle');
-    dot.setAttribute('cx', nutrient.x);
-    dot.setAttribute('cy', nutrient.y);
-    dot.setAttribute('r', Soup.NUTRIENT_RADIUS);
-    dot.setAttribute('fill', '#c9d94a');
-    dot.setAttribute('opacity', '0.7');
-    groupElement.appendChild(dot);
-  }
-}
-
-const BIRTH_EFFECT_MAX_RADIUS = 14;
-
-/**
- * renderBirthEffects — draws every Soup.birthEffects entry as an expanding, fading
- * ring (§18), in its own layer so a tiny newborn organism isn't the only visual cue
- * that a birth just happened.
- */
-function renderBirthEffects(soup, groupElement) {
-  groupElement.innerHTML = '';
-
-  for (const effect of soup.birthEffects) {
-    const progress = effect.tick / Soup.BIRTH_EFFECT_TICKS;
-    const ring = document.createElementNS(SVG_NS, 'circle');
-    ring.setAttribute('cx', effect.x);
-    ring.setAttribute('cy', effect.y);
-    ring.setAttribute('r', 1 + progress * BIRTH_EFFECT_MAX_RADIUS);
-    ring.setAttribute('fill', 'none');
-    ring.setAttribute('stroke', '#fff2b0');
-    ring.setAttribute('stroke-width', 1.5);
-    ring.setAttribute('opacity', Math.max(0, 1 - progress));
-    groupElement.appendChild(ring);
-  }
-}
-
-/**
- * renderSoup — (re)draws every LifeForm in soup.entities into groupElement (the
- * <g id="soup-layer"> nested inside the shared <svg id="soup">, see §1/§9). `time`
- * (ms) drives appendage/body animation (§13) — pass the rAF timestamp.
- */
-function renderSoup(soup, groupElement, time) {
-  groupElement.innerHTML = '';
-
-  for (const entity of soup.entities) {
-    groupElement.appendChild(renderOrganism(entity, entity.x, entity.y, entity.displayRadius, time));
-  }
-}
-
 // Reference-view magnification: displayRadius (~1-10px, tuned for the crowded soup) is
 // too small to read at a glance, so Organism View (§12) scales it up with a floor so
 // even the smallest organisms are clearly visible.
@@ -193,24 +139,4 @@ function renderOrganismReference(entity, time = 0) {
   svg.appendChild(renderOrganism(entity, center, center, radius, time));
 
   return svg;
-}
-
-/**
- * attachSoupClickHandler — one click listener on the root <svg id="soup"> (needed for
- * createSVGPoint/getScreenCTM, not available on a <g>), converts the click to the SVG's
- * local coordinate space, and hit-tests via Soup.findEntityAt. Deliberately not
- * per-organism DOM listeners — see §7's coordinate-based hit-testing decision.
- */
-function attachSoupClickHandler(soup, rootSvgElement, onSelect) {
-  rootSvgElement.addEventListener('click', (event) => {
-    const point = rootSvgElement.createSVGPoint();
-    point.x = event.clientX;
-    point.y = event.clientY;
-
-    const ctm = rootSvgElement.getScreenCTM();
-    if (!ctm) return;
-    const local = point.matrixTransform(ctm.inverse());
-
-    onSelect(soup.findEntityAt(local.x, local.y));
-  });
 }

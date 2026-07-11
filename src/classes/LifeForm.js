@@ -1,10 +1,11 @@
 /**
- * LifeForm — an organism living in the soup: a Genome plus runtime state.
- * See docs/Game-Plan.md §9/§10/§11/§14/§15/§17/§18. Movement (all 8 movementPattern
- * values, §17), aging, lifespan/overcrowding/starvation/predation death (with a fade
- * out + decomposition into a nutrient, §18), simple asexual reproduction (with a
- * fade-in + spawn effect, §18), and passive + foraging/predation feeding are wired
- * up. Growth and parasitism are not.
+ * LifeForm — an organism living in the soup: two Genomes (diploid, §28) plus runtime
+ * state. See docs/Game-Plan.md §9/§10/§11/§14/§15/§17/§18/§19/§22/§26/§27/§28.
+ * Movement (all 8 movementPattern values, §17), aging + growth toward adult size
+ * (§22), lifespan/overcrowding/starvation/predation death (with a fade out +
+ * decomposition into a nutrient, §18), asexual and sexual reproduction (with a
+ * fade-in + spawn effect, §18/§19), and passive + foraging/predation/scavenging/
+ * parasitism feeding are all wired up.
  */
 class LifeForm {
   static nextId = 1;
@@ -57,9 +58,22 @@ class LifeForm {
   // better snappy.
   static BIRTH_FADE_TICKS = 20;
 
-  constructor(genome, x, y) {
+  // Fraction of adult size every organism starts at (§22) — traits.size is now the
+  // adult/mature size, not the current size.
+  static STARTING_SIZE_FRACTION = 0.3;
+
+  // Multiplies growthRate to get the per-tick growth step (§22) — tuned so a
+  // mid-range organism reaches ~95% adult size at roughly a third of an average
+  // lifespan. Starting guess, not empirically fit.
+  static GROWTH_RATE_SCALE = 0.03;
+
+  constructor(genomeA, genomeB, x, y) {
     this.id = LifeForm.nextId++;
-    this.genome = genome instanceof Genome ? genome : new Genome(genome);
+    this.genomeA = genomeA instanceof Genome ? genomeA : new Genome(genomeA);
+    this.genomeB = genomeB instanceof Genome ? genomeB : new Genome(genomeB);
+    // Expression rule (§28): bitwise OR, "1 is dominant" — a bit only reads 0 if BOTH
+    // strands have 0 there. Computed once here, not on every trait access.
+    this.expressedGenome = new Genome(Genome.toHex(this.genomeA.value | this.genomeB.value));
     this.x = x;
     this.y = y;
     this.age = 0;
@@ -67,7 +81,8 @@ class LifeForm {
     this.lastReproducedAt = 0;
     this.forcedDeath = false;
     this.energy = LifeForm.STARTING_ENERGY;
-    this.traits = this.genome.decodeAll();
+    this.traits = this.expressedGenome.decodeAll();
+    this.currentSizeFraction = LifeForm.STARTING_SIZE_FRACTION; // §22
 
     // Fade-in (§18): every new LifeForm starts here, not just reproduction offspring —
     // the initial seed population fades in on page load too.
@@ -91,8 +106,10 @@ class LifeForm {
     return 1;
   }
 
+  // Current size, not adult/mature size (§22) — traits.size is the adult value;
+  // grows toward it over the organism's life via currentSizeFraction.
   get radius() {
-    return this.traits.size;
+    return this.traits.size * this.currentSizeFraction;
   }
 
   get displayRadius() {
@@ -138,7 +155,15 @@ class LifeForm {
 
     this.age += 1;
 
-    const metabolism = LifeForm.BASE_METABOLISM_RATE * this.traits.size;
+    // Growth (§22): asymptotic approach toward adult size, never overshoots 1.
+    this.currentSizeFraction = Math.min(
+      1,
+      this.currentSizeFraction + this.traits.growthRate * LifeForm.GROWTH_RATE_SCALE * (1 - this.currentSizeFraction),
+    );
+
+    // Metabolism scales with CURRENT size, not adult size — juveniles cost less to
+    // maintain than adults of the same genome (§22).
+    const metabolism = LifeForm.BASE_METABOLISM_RATE * this.radius;
     const regen = this.traits.dietType === 'photosynthetic'
       ? LifeForm.PHOTOSYNTHETIC_REGEN_RATE
       : LifeForm.OTHER_DIET_REGEN_RATE;
@@ -181,7 +206,8 @@ class LifeForm {
 
     if (pattern === 'seekMate') {
       const mate = soup.findNearestEntity(this.x, this.y, senseRadius, (other) => (
-        other !== this && other.isAlive && Genome.areCompatible(this.genome.hex, other.genome.hex)
+        other !== this && other.isAlive
+        && Genome.areCompatible(this.expressedGenome.hex, other.expressedGenome.hex)
       ));
       return mate ? { x: mate.x, y: mate.y, flee: false } : null;
     }
@@ -264,17 +290,23 @@ class LifeForm {
   // Asexual/budding/either (§19 — either falls back here when matePairs() found no
   // mate for it this tick; the cooldown check below is what prevents an either that
   // DID just mate from also reproducing asexually the same tick, no extra flag needed).
-  // Returns a mutated copy of this genome's hex if reproduction happens this tick, else null.
+  // Diploid (§28): both strands are independently mutated copies of this organism's
+  // corresponding strand. Returns { hexA, hexB } if reproduction happens this tick, else null.
   tryReproduce() {
     const type = this.traits.reproductionType;
     if (type !== 'asexual' && type !== 'budding' && type !== 'either') return null;
     if (!this.canAffordReproduction()) return null;
 
     this.recordReproduction();
-    return Genome.mutate(this.genome.hex, LifeForm.MUTATION_RATE);
+    return {
+      hexA: Genome.mutate(this.genomeA.hex, LifeForm.MUTATION_RATE),
+      hexB: Genome.mutate(this.genomeB.hex, LifeForm.MUTATION_RATE),
+    };
   }
 
   destroy() {
-    this.genome.destroy();
+    this.genomeA.destroy();
+    this.genomeB.destroy();
+    this.expressedGenome.destroy();
   }
 }

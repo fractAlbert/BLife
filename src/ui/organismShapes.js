@@ -8,38 +8,44 @@
 const SHAPES_SVG_NS = 'http://www.w3.org/2000/svg';
 
 // Each entry: how many points to sample, and angle -> {x, y} in unit-circle space.
+// Point counts reduced from the original pass (§24) — this loop reruns in full every
+// frame regardless of anything else, since an organism's position changes every tick,
+// so shrinking it is the only way to cut its cost. Higher-frequency shapes (bumpy
+// blob, spiky star) kept more points than the low-frequency ones since their sin(a*5)/
+// sin(a*7) perturbations need enough samples to still read as bumpy/spiky rather than
+// aliasing into a smoother, wrong-looking curve.
 const BODY_SHAPES = {
   shape0: {
-    points: 24,
+    points: 16,
     shape: (a) => ({ x: Math.cos(a), y: Math.sin(a) }), // circle
   },
   shape1: {
-    points: 24,
+    points: 16,
     shape: (a) => ({ x: Math.cos(a) * 1.3, y: Math.sin(a) * 0.8 }), // oval
   },
   shape2: {
-    points: 24,
+    points: 16,
     shape: (a) => {
       const r = 1 - 0.4 * Math.cos(a); // tapers to a point near a=0
       return { x: Math.cos(a) * r, y: Math.sin(a) * r };
     },
   },
   shape3: {
-    points: 28,
+    points: 20,
     shape: (a) => {
       const r = 1 + 0.15 * Math.sin(a * 3) + 0.08 * Math.sin(a * 5 + 1); // amoeba-like bumps
       return { x: Math.cos(a) * r, y: Math.sin(a) * r };
     },
   },
   shape4: {
-    points: 28,
+    points: 20,
     shape: (a) => {
       const r = 1 + 0.35 * Math.sin(a * 7); // spiky star
       return { x: Math.cos(a) * r, y: Math.sin(a) * r };
     },
   },
   shape5: {
-    points: 24,
+    points: 16,
     shape: (a) => {
       const r = 1 - 0.3 * Math.cos(a); // single-side indent (bean/kidney)
       return { x: Math.cos(a) * r, y: Math.sin(a) * r };
@@ -50,7 +56,7 @@ const BODY_SHAPES = {
     shape: (a) => ({ x: Math.cos(a), y: Math.sin(a) }), // pentagon
   },
   shape7: {
-    points: 18,
+    points: 14,
     shape: (a) => {
       const r = 1 + 0.4 * Math.sin(a * 3); // trefoil / clover
       return { x: Math.cos(a) * r, y: Math.sin(a) * r };
@@ -170,71 +176,102 @@ function getAppendageShape(style, x1, y1, x2, y2, strokeWidth) {
 }
 
 /**
- * renderShapeCommandsToSVG — the ONLY SVG-DOM-touching part of appendage rendering.
- * Converts getAppendageShape()'s portable command list into actual SVG elements.
- * A canvas renderer would replace just this function, never getAppendageShape().
+ * createElementForCommand — an empty SVG element of the right type for a command,
+ * with no attributes set yet. Paired with applyShapeCommandToElement (below) so
+ * "create" and "update" share one attribute-setting implementation (§23).
+ */
+function createElementForCommand(cmd) {
+  switch (cmd.type) {
+    case 'line': return document.createElementNS(SHAPES_SVG_NS, 'line');
+    case 'circle': return document.createElementNS(SHAPES_SVG_NS, 'circle');
+    case 'polygon': return document.createElementNS(SHAPES_SVG_NS, 'polygon');
+    case 'polyline':
+    case 'quadratic': return document.createElementNS(SHAPES_SVG_NS, 'path');
+    default: return null;
+  }
+}
+
+/**
+ * applyShapeCommandToElement — the ONLY place that sets SVG attributes for a given
+ * command type. Called both when an element is first created and every time it's
+ * updated afterward (§23), so "create" and "update" can never drift out of sync with
+ * each other.
+ */
+function applyShapeCommandToElement(el, cmd, color, strokeWidth) {
+  switch (cmd.type) {
+    case 'line':
+      el.setAttribute('x1', cmd.x1);
+      el.setAttribute('y1', cmd.y1);
+      el.setAttribute('x2', cmd.x2);
+      el.setAttribute('y2', cmd.y2);
+      el.setAttribute('stroke', color);
+      el.setAttribute('stroke-width', strokeWidth * (cmd.widthScale || 1));
+      el.setAttribute('stroke-linecap', 'round');
+      break;
+
+    case 'circle':
+      el.setAttribute('cx', cmd.cx);
+      el.setAttribute('cy', cmd.cy);
+      el.setAttribute('r', cmd.r);
+      el.setAttribute('fill', color);
+      break;
+
+    case 'polygon':
+      el.setAttribute('points', cmd.points.map((p) => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' '));
+      el.setAttribute('fill', color);
+      break;
+
+    case 'polyline': {
+      let d = `M ${cmd.points[0][0].toFixed(2)} ${cmd.points[0][1].toFixed(2)}`;
+      for (let i = 1; i < cmd.points.length; i++) {
+        d += ` L ${cmd.points[i][0].toFixed(2)} ${cmd.points[i][1].toFixed(2)}`;
+      }
+      el.setAttribute('d', d);
+      el.setAttribute('fill', 'none');
+      el.setAttribute('stroke', color);
+      el.setAttribute('stroke-width', strokeWidth);
+      el.setAttribute('stroke-linecap', 'round');
+      break;
+    }
+
+    case 'quadratic':
+      el.setAttribute('d', `M ${cmd.x1.toFixed(2)} ${cmd.y1.toFixed(2)} Q ${cmd.cx.toFixed(2)} ${cmd.cy.toFixed(2)} ${cmd.x2.toFixed(2)} ${cmd.y2.toFixed(2)}`);
+      el.setAttribute('fill', 'none');
+      el.setAttribute('stroke', color);
+      el.setAttribute('stroke-width', strokeWidth);
+      el.setAttribute('stroke-linecap', 'round');
+      break;
+
+    default:
+      break;
+  }
+}
+
+/**
+ * renderShapeCommandsToSVG — creates fresh SVG elements from a command list (used by
+ * the one-shot Organism View reference render, where recreating every frame is fine
+ * since it's a single organism). A canvas renderer would replace this function (and
+ * updateShapeElementsFromCommands), never getAppendageShape().
  */
 function renderShapeCommandsToSVG(commands, color, strokeWidth) {
   const elements = [];
-
   for (const cmd of commands) {
-    switch (cmd.type) {
-      case 'line': {
-        const el = document.createElementNS(SHAPES_SVG_NS, 'line');
-        el.setAttribute('x1', cmd.x1);
-        el.setAttribute('y1', cmd.y1);
-        el.setAttribute('x2', cmd.x2);
-        el.setAttribute('y2', cmd.y2);
-        el.setAttribute('stroke', color);
-        el.setAttribute('stroke-width', strokeWidth * (cmd.widthScale || 1));
-        el.setAttribute('stroke-linecap', 'round');
-        elements.push(el);
-        break;
-      }
-      case 'circle': {
-        const el = document.createElementNS(SHAPES_SVG_NS, 'circle');
-        el.setAttribute('cx', cmd.cx);
-        el.setAttribute('cy', cmd.cy);
-        el.setAttribute('r', cmd.r);
-        el.setAttribute('fill', color);
-        elements.push(el);
-        break;
-      }
-      case 'polygon': {
-        const el = document.createElementNS(SHAPES_SVG_NS, 'polygon');
-        el.setAttribute('points', cmd.points.map((p) => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' '));
-        el.setAttribute('fill', color);
-        elements.push(el);
-        break;
-      }
-      case 'polyline': {
-        let d = `M ${cmd.points[0][0].toFixed(2)} ${cmd.points[0][1].toFixed(2)}`;
-        for (let i = 1; i < cmd.points.length; i++) {
-          d += ` L ${cmd.points[i][0].toFixed(2)} ${cmd.points[i][1].toFixed(2)}`;
-        }
-        const el = document.createElementNS(SHAPES_SVG_NS, 'path');
-        el.setAttribute('d', d);
-        el.setAttribute('fill', 'none');
-        el.setAttribute('stroke', color);
-        el.setAttribute('stroke-width', strokeWidth);
-        el.setAttribute('stroke-linecap', 'round');
-        elements.push(el);
-        break;
-      }
-      case 'quadratic': {
-        const el = document.createElementNS(SHAPES_SVG_NS, 'path');
-        el.setAttribute('d', `M ${cmd.x1.toFixed(2)} ${cmd.y1.toFixed(2)} Q ${cmd.cx.toFixed(2)} ${cmd.cy.toFixed(2)} ${cmd.x2.toFixed(2)} ${cmd.y2.toFixed(2)}`);
-        el.setAttribute('fill', 'none');
-        el.setAttribute('stroke', color);
-        el.setAttribute('stroke-width', strokeWidth);
-        el.setAttribute('stroke-linecap', 'round');
-        elements.push(el);
-        break;
-      }
-      default:
-        break;
-    }
+    const el = createElementForCommand(cmd);
+    if (!el) continue;
+    applyShapeCommandToElement(el, cmd, color, strokeWidth);
+    elements.push(el);
   }
-
   return elements;
+}
+
+/**
+ * updateShapeElementsFromCommands — updates existing elements in place from fresh
+ * command data (§23), instead of recreating them. Assumes `elements`/`commands` are
+ * the same length and in the same order, which holds because a given organism's
+ * appendageStyle (and therefore command structure) never changes after birth.
+ */
+function updateShapeElementsFromCommands(elements, commands, color, strokeWidth) {
+  for (let i = 0; i < commands.length; i++) {
+    applyShapeCommandToElement(elements[i], commands[i], color, strokeWidth);
+  }
 }

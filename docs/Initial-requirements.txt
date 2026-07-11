@@ -1,0 +1,17 @@
+This will be a game where microscopic life flourishes in a primoridal soup.  The screen will feature a menu on top and controls on the side.  The rest of the screen, pretty much, will be dedicated to the play area that represents the cosmic soup.  it will be possible to zoom in and out.
+
+1. Each object should be created as a js class.  make one class per file.  There will be a deploy script that minifies all the needed js into a single file.
+2. Each class has it's own constructor and desctructors for garbage cleanup.
+3. There need to classes for the following at first
+ a. the soup
+ b. The top menu
+ c. The side controls
+ d. Each type of object life that can live in the soup.
+
+ 4. Each life class in the soup needs to describe certain characteristics
+  a. How it moves (if it does).  This would include movement patterns and speed.
+  b. How if feeds
+  c. How it grows
+  d. how it reproduces.
+  e. name
+  f. Lifespan

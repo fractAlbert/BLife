@@ -1,0 +1,40 @@
+/* Styles for the .genome-table element built by src/ui/genomeTable.js.
+   Shared between genome-test.html and the game's Inspector panel. */
+
+.genome-table {
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+}
+
+.genome-table h2 {
+  font-size: 0.85rem;
+  font-family: monospace;
+  margin-top: 0;
+  word-break: break-all;
+}
+
+.genome-table dl {
+  margin: 0;
+}
+
+.genome-table dt {
+  font-size: 0.75rem;
+  color: #555;
+  margin: 0.5rem 0 0.1rem;
+  overflow-wrap: break-word;
+}
+
+.genome-table dt:first-child {
+  margin-top: 0;
+}
+
+.genome-table dd {
+  margin: 0;
+  font-size: 0.9rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid #eee;
+  overflow-wrap: break-word;
+}

@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BLife</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="src/ui/genomeTable.css">
+</head>
+<body>
+<div class="app">
+
+  <header class="top-menu">
+    <details class="menu-group">
+      <summary>Simulation</summary>
+      <div class="menu-dropdown">
+        <button disabled title="Coming soon">New Soup</button>
+        <button disabled title="Coming soon">Save State</button>
+        <button disabled title="Coming soon">Load State</button>
+        <button disabled title="Coming soon">Reset</button>
+      </div>
+    </details>
+
+    <details class="menu-group">
+      <summary>View</summary>
+      <div class="menu-dropdown">
+        <button disabled title="Coming soon">Reset Camera</button>
+        <button disabled title="Coming soon">Toggle Grid</button>
+        <button disabled title="Coming soon">Toggle Stats Overlay</button>
+        <button disabled title="Coming soon">Toggle Side Panel</button>
+      </div>
+    </details>
+
+    <details class="menu-group">
+      <summary>Debug</summary>
+      <div class="menu-dropdown">
+        <a href="genome-test.html" target="_blank" rel="noopener">Genome Test Page</a>
+      </div>
+    </details>
+
+    <details class="menu-group">
+      <summary>Help</summary>
+      <div class="menu-dropdown">
+        <button disabled title="Coming soon">About</button>
+        <button disabled title="Coming soon">Controls Reference</button>
+      </div>
+    </details>
+
+    <div class="playback-controls">
+      <button id="btn-play-pause" aria-label="Pause" title="Pause">⏸</button>
+      <button id="btn-step" aria-label="Step" title="Step one tick">⏭</button>
+      <button disabled title="Coming soon">Speed</button>
+    </div>
+  </header>
+
+  <aside class="side-panel">
+    <section class="panel-block">
+      <h2>Spawn</h2>
+      <p class="placeholder">Spawn tools will appear here once life-form species exist.</p>
+    </section>
+
+    <section class="panel-block">
+      <h2>Environment</h2>
+      <p class="placeholder">Nutrient density, temperature, current — coming soon.</p>
+    </section>
+
+    <section class="panel-block">
+      <h2>Zoom</h2>
+      <p class="placeholder">Zoom control coming soon.</p>
+    </section>
+
+    <section class="panel-block" id="inspector">
+      <h2>Inspector</h2>
+      <p class="placeholder" id="inspector-empty">No organism selected. Click an organism in the soup to see its traits and genes.</p>
+      <div id="inspector-content" hidden></div>
+    </section>
+
+    <section class="panel-block">
+      <h2>Population</h2>
+      <button id="btn-view-population" class="view-organism-button">View Population</button>
+    </section>
+  </aside>
+
+  <main class="play-area">
+    <svg id="soup" class="soup-view">
+      <g id="nutrient-layer"></g>
+      <g id="soup-layer"></g>
+      <g id="birth-effect-layer"></g>
+    </svg>
+
+    <section id="organism-view" class="organism-view" hidden>
+      <button id="btn-back-to-soup-organism" class="back-button">&larr; Back to Soup</button>
+      <div id="organism-view-content"></div>
+    </section>
+
+    <section id="population-view" class="organism-view" hidden>
+      <button id="btn-back-to-soup-population" class="back-button">&larr; Back to Soup</button>
+      <div id="population-view-content"></div>
+    </section>
+  </main>
+
+  <footer class="status-bar">
+    <span id="status-tick">Tick: 0</span>
+    <span id="status-population">Population: 0</span>
+    <span id="status-food">Food: 0</span>
+    <span id="status-diversity">Diversity: --</span>
+    <span id="status-fps">FPS: --</span>
+    <span id="status-selected">Selected: none</span>
+  </footer>
+
+</div>
+
+<script src="src/classes/Genome.js"></script>
+<script src="src/classes/LifeForm.js"></script>
+<script src="src/classes/Soup.js"></script>
+<script src="src/ui/genomeTable.js"></script>
+<script src="src/ui/organismShapes.js"></script>
+<script src="src/ui/renderSoup.js"></script>
+<script src="src/ui/renderGeneMapView.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -21,6 +21,12 @@ const statusFps = document.getElementById('status-fps');
 const statusSelected = document.getElementById('status-selected');
 const btnPlayPause = document.getElementById('btn-play-pause');
 const btnStep = document.getElementById('btn-step');
+const btnNewSoup = document.getElementById('btn-new-soup');
+const btnResetSoup = document.getElementById('btn-reset-soup');
+
+// Same size the very first page-load population uses (below) — "New Soup" recreates
+// a soup like that one, just with a fresh random seed (§31).
+const INITIAL_POPULATION = 18;
 
 // canvas.width/height match its actual measured CSS pixel size, so 1 unit = 1 CSS
 // pixel — same "no dead space or oval distortion" idea as the old SVG viewBox
@@ -32,12 +38,20 @@ soupRoot.height = soupHeight;
 const soupCtx = soupRoot.getContext('2d');
 
 const soup = new Soup({ width: soupWidth, height: soupHeight });
-soup.spawnRandom(18);
+soup.spawnRandom(INITIAL_POPULATION);
+// §31: what "Reset" rewinds back to — re-captured on every "New Soup" so Reset always
+// targets this soup's actual starting point, not necessarily the original page load.
+let currentSeed = soup.captureSeed();
+
+function refreshStatusBar() {
+  statusTick.textContent = `Tick: ${soup.tickCount}`;
+  statusPopulation.textContent = `Population: ${soup.aliveCount}`;
+  statusFood.textContent = `Food: ${soup.nutrients.length}`;
+  statusDiversity.textContent = `Diversity: ${soup.calculateGeneticDiversity().toFixed(0)}%`;
+}
 
 renderSoupCanvas(soupCtx, soup, performance.now());
-statusPopulation.textContent = `Population: ${soup.aliveCount}`;
-statusFood.textContent = `Food: ${soup.nutrients.length}`;
-statusDiversity.textContent = `Diversity: ${soup.calculateGeneticDiversity().toFixed(0)}%`;
+refreshStatusBar();
 
 let isRunning = true;
 let selectedEntity = null;
@@ -258,6 +272,27 @@ function appendPopulationGroup(headingText, entities) {
 }
 
 btnViewPopulation.addEventListener('click', showPopulationView);
+
+// §31: shared cleanup after either button replaces the population out from under
+// whatever was selected/open — the old entities no longer exist, so any view
+// referencing one must close, and the status bar shouldn't show stale numbers.
+function afterSoupReinitialize() {
+  exitDetailView();
+  showInspector(null);
+  refreshStatusBar();
+  renderSoupCanvas(soupCtx, soup, performance.now());
+}
+
+btnNewSoup.addEventListener('click', () => {
+  soup.reinitialize(null, INITIAL_POPULATION);
+  currentSeed = soup.captureSeed();
+  afterSoupReinitialize();
+});
+
+btnResetSoup.addEventListener('click', () => {
+  soup.reinitialize(currentSeed);
+  afterSoupReinitialize();
+});
 
 attachCanvasClickHandler(soup, soupRoot, onSoupClick);
 

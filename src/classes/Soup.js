@@ -55,6 +55,11 @@ class Soup {
     // incrementally as entities move.
     this.entityGrid = new SpatialGrid();
 
+    this.seedNutrients();
+  }
+
+  // Factored out of the constructor (§31) so reinitialize() doesn't duplicate it.
+  seedNutrients() {
     for (let i = 0; i < Soup.NUTRIENT_COUNT; i++) {
       this.nutrients.push(this.randomNutrientPosition());
     }
@@ -110,6 +115,43 @@ class Soup {
       const x = this.margin + Math.random() * (this.bounds.width - this.margin * 2);
       const y = this.margin + Math.random() * (this.bounds.height - this.margin * 2);
       this.entities.push(new LifeForm(Genome.random(), Genome.random(), x, y));
+    }
+  }
+
+  // §31: a snapshot of the current living population's genomes and positions, so
+  // reinitialize() can later rewind back to exactly this starting point (Reset),
+  // rather than generating a new random one (New Soup). Deliberately not full
+  // save-state — no age/energy/traits, just enough to reconstruct fresh LifeForms
+  // identical to how this population started out.
+  captureSeed() {
+    return this.entities
+      .filter((entity) => entity.isAlive)
+      .map((entity) => ({
+        hexA: entity.genomeA.hex, hexB: entity.genomeB.hex, x: entity.x, y: entity.y,
+      }));
+  }
+
+  // §31: shared wipe-and-respawn logic for New Soup / Reset. Pass `seed` (from
+  // captureSeed()) to rewind to that exact starting population, or omit it and pass
+  // `count` to spawn a brand-new random one instead.
+  reinitialize(seed = null, count = 0) {
+    for (const entity of this.entities) {
+      entity.destroy();
+    }
+    this.entities = [];
+    this.nutrients = [];
+    this.birthEffects = [];
+    this.entityGrid.clear();
+    this.tickCount = 0;
+
+    this.seedNutrients();
+
+    if (seed) {
+      for (const { hexA, hexB, x, y } of seed) {
+        this.entities.push(new LifeForm(hexA, hexB, x, y));
+      }
+    } else {
+      this.spawnRandom(count);
     }
   }
 
